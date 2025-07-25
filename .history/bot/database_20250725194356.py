@@ -1,21 +1,20 @@
 import sqlite3
 from datetime import datetime, timedelta
-from typing import Optional
 
-def criar_acesso(user_id: int):
+def criar_acesso(user_id):
     conn = sqlite3.connect('dados.db')
     cursor = conn.cursor()
-    expiracao = (datetime.now() + timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    expiracao = datetime.now() + timedelta(hours=24)
     
     cursor.execute("""
         INSERT OR REPLACE INTO acessos (user_id, expiracao)
         VALUES (?, ?)
-    """, (user_id, expiracao))
+    """, (user_id, expiracao.strftime("%Y-%m-%d %H:%M:%S")))
     
     conn.commit()
     conn.close()
 
-def verificar_acesso(user_id: int) -> bool:
+def verificar_acesso(user_id):
     conn = sqlite3.connect('dados.db')
     cursor = conn.cursor()
     
@@ -26,4 +25,4 @@ def verificar_acesso(user_id: int) -> bool:
     
     acesso = cursor.fetchone()
     conn.close()
-    return bool(acesso)  # Retorna True se encontrou acesso
+    return acesso is not None

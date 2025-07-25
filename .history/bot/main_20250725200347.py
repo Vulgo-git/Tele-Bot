@@ -9,14 +9,8 @@ from bot.database import verificar_acesso
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# Verificação crítica do token
-if not TOKEN:
-    raise EnvironmentError(
-        "Token do Telegram não encontrado! "
-        "Verifique seu arquivo .env ou variáveis de ambiente."
-    )
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Verificação segura para evitar None
     if not update.message or not update.message.from_user:
         return
     
@@ -29,7 +23,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    # Garantia de que first_name existe
     nome = user.first_name or "usuário"
+    
     await update.message.reply_text(
         f"👋 Olá {nome}!\n\n"
         "🔓 Tenha acesso a consultas completas de:\n"
@@ -39,15 +35,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Verificação segura para CallbackQuery
     query = update.callback_query
     if not query or not query.data or not query.from_user:
         return
     
+    # Cast para tipo conhecido
     safe_query = cast(CallbackQuery, query)
     user_id = safe_query.from_user.id
     
     if safe_query.data == 'pagamento':
         link = gerar_link_pagamento(user_id, 13.00)
+        
+        # Verificação segura para message
         if safe_query.message:
             msg = cast(Message, safe_query.message)
             await msg.reply_text(
@@ -60,6 +60,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
     
+    # Verificar acesso pago
     if not verificar_acesso(user_id):
         await safe_query.answer("⛔ Acesso bloqueado! Libere seu acesso por 24h.", show_alert=True)
         return
@@ -69,18 +70,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if safe_query.message:
             msg = cast(Message, safe_query.message)
             await msg.reply_text("Digite o CPF para consulta (somente números):")
-            
-            # CORREÇÃO: Inicialize user_data se necessário
-            if context.user_data is None:
-                context.user_data = {}
-                
             context.user_data['consulta_tipo'] = 'cpf'
-    # ... (adicionar outros tipos de consulta aqui)
+    # ... outros tipos de consulta
 
 def main():
-    if TOKEN is None:
-        raise RuntimeError("Variável de ambiente TELEGRAM_TOKEN não está definida.")
-
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
