@@ -1,0 +1,42 @@
+# Estágio de construção
+FROM python:3.10-slim as builder
+
+WORKDIR /app
+
+# Instalar dependências de compilação
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar requirements primeiro para aproveitar cache de camadas
+COPY requirements.txt .
+
+# Instalar dependências
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+# Estágio final
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Copiar dependências instaladas
+COPY --from=builder /root/.local /root/.local
+
+# Copiar código da aplicação
+COPY . .
+
+# Criar diretório persistente para banco de dados
+RUN mkdir -p /data
+
+# Definir variáveis de ambiente
+ENV PATH=/root/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    SQLITE_PATH=/data/acessos.db
+
+# Expor porta para o painel
+EXPOSE 8000
+
+# Comando principal (será sobrescrito pelo Railway se necessário)
+CMD ["sh", "-c", "python bot/main.py & uvicorn painel.main:app --host 0.0.0.0 --port $PORT"]
