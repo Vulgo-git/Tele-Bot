@@ -1,0 +1,7 @@
+# Dependências do projeto
+python-telegram-bot==20.3
+fastapi
+uvicorn
+python-dotenv
+jinja2
+requests

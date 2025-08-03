@@ -2,46 +2,57 @@ import os
 import sys
 import logging
 import asyncio
-from typing import cast
+import traceback
+from typing import cast, Optional
 from dotenv import load_dotenv
 
-# Configuração inicial de logging
+# Configuração inicial de logging - CRÍTICO PARA DIAGNÓSTICO
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
-    stream=sys.stdout
+    stream=sys.stdout  # Garante logs no Railway/Docker
 )
 logger = logging.getLogger(__name__)
 
-# Carregar variáveis de ambiente
-load_dotenv()
-
-# Obter token com garantia de tipo
-raw_token = os.getenv("TELEGRAM_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
-if not raw_token:
-    logger.critical("Token do Telegram não encontrado!")
-    sys.exit(1)
-TOKEN: str = raw_token  # Agora garantido como string
-
-logger.info(f"Token carregado: {TOKEN[:5]}...")
-
-# Importações principais
+# ================== CARREGAMENTO DE VARIÁVEIS ==================
 try:
-    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
+    load_dotenv()  # Tenta carregar .env localmente
+    logger.info("Variáveis de ambiente do .env carregadas")
+except Exception as e:
+    logger.warning(f"Não foi possível carregar .env: {e}")
+
+# Obtenção robusta do token
+TOKEN = os.getenv("TELEGRAM_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
+if not TOKEN:
+    logger.critical("ERRO FATAL: Token do Telegram não encontrado!")
+    logger.critical("Verifique se a variável TELEGRAM_TOKEN está definida")
+    logger.critical("No Railway: Settings → Variables → TELEGRAM_TOKEN")
+    sys.exit(1)  # Encerra o programa imediatamente
+
+logger.info(f"Token do Telegram carregado (inicia com: {TOKEN[:5]}...)")
+
+# ================== IMPORTAÇÕES PRINCIPAIS ==================
+try:
+    from telegram import (
+        Update,
+        InlineKeyboardButton,
+        InlineKeyboardMarkup,
+        Message,
+        CallbackQuery
+    )
     from telegram.ext import (
         Application,
         CommandHandler,
         CallbackQueryHandler,
         ContextTypes,
-        CallbackContext,
-        ApplicationBuilder
+        CallbackContext
     )
     from telegram.constants import ParseMode
 except ImportError as e:
     logger.critical(f"Falha ao importar bibliotecas: {e}")
     sys.exit(1)
 
-# Importações personalizadas
+# ================== IMPORTAÇÕES PERSONALIZADAS ==================
 try:
     from bot.pagamentos import gerar_link_pagamento
     from bot.database import verificar_acesso
@@ -60,6 +71,7 @@ except ImportError as e:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler para o comando /start."""
     try:
+        # Verificações de segurança
         if not update.message or not update.message.from_user:
             logger.warning("Update inválido recebido no /start")
             return
@@ -67,19 +79,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.message.from_user
         logger.info(f"Comando /start recebido de {user.id}")
         
+        # Teclado de opções
         keyboard = [
             [InlineKeyboardButton("🔍 Consultar CPF", callback_data='cpf')],
             [InlineKeyboardButton("🏢 Consultar CNPJ", callback_data='cnpj')],
             [InlineKeyboardButton("🚗 Consultar Placa", callback_data='placa')],
+            # Atualizado para R$15 por 5 dias
             [InlineKeyboardButton("💰 Liberar Acesso 5 Dias (R$15)", callback_data='pagamento')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
+        # Saudação personalizada
         nome = user.first_name or "usuário"
         response = (
             f"👋 Olá {nome}!\n\n"
             "🔓 Tenha acesso a consultas completas de:\n"
             "- CPF\n- Nome\n- Telefone\n- CNPJ\n- Placa de veículo\n\n"
+            # Atualizado para R$15 por 5 dias
             "💵 Apenas R$15 para 5 dias de acesso ilimitado!"
         )
         
@@ -102,13 +118,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user_id = safe_query.from_user.id
         logger.info(f"Callback recebido: {safe_query.data} de {user_id}")
         
+        # Processar ação de pagamento
         if safe_query.data == 'pagamento':
             logger.info(f"Usuário {user_id} solicitou pagamento")
+            # Atualizado para R$15
             link = gerar_link_pagamento(user_id, 15.00)
             
             if safe_query.message:
                 msg = cast(Message, safe_query.message)
                 await msg.reply_text(
+                    # Atualizado para 5 dias
                     "💰 *LIBERAR ACESSO 5 DIAS*\n\n"
                     "Valor: R$15,00\n"
                     "Clique no link abaixo para pagar:\n"
@@ -118,21 +137,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
             return
         
+        # Verificar acesso antes de permitir consultas
         if not verificar_acesso(user_id):
             logger.info(f"Usuário {user_id} tentou acessar sem permissão")
+            # Atualizado para 5 dias
             await safe_query.answer("⛔ Acesso bloqueado! Libere seu acesso por 5 dias.", show_alert=True)
             return
         
+        # Redirecionar para consultas
         if safe_query.data == 'cpf':
             if safe_query.message:
                 msg = cast(Message, safe_query.message)
                 await msg.reply_text("Digite o CPF para consulta (somente números):")
+                
+                # Inicializar user_data se necessário
                 if context.user_data is None:
                     context.user_data = {}
                 context.user_data['consulta_tipo'] = 'cpf'
-                
-        # Outros tipos de consulta aqui...
-
+        
+        # Adicione outros tipos de consulta aqui...
+        
     except Exception as e:
         logger.error(f"Erro no button_handler: {e}", exc_info=True)
         if update.callback_query and update.callback_query.message:
@@ -143,8 +167,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 # ================== TRATAMENTO DE ERROS ==================
 async def error_handler(update: object, context: CallbackContext) -> None:
+    """Captura todos os erros não tratados."""
     try:
         logger.error("Exceção não tratada:", exc_info=context.error)
+        
+        # Tenta enviar uma mensagem de erro ao usuário
         if update and isinstance(update, Update):
             if update.effective_message:
                 await update.effective_message.reply_text(
@@ -153,53 +180,71 @@ async def error_handler(update: object, context: CallbackContext) -> None:
     except Exception as e:
         logger.critical(f"Falha no tratamento de erros: {e}")
 
-# ================== FUNÇÕES AUXILIARES ==================
+# ================== INICIALIZAÇÃO ==================
 async def post_init(application: Application) -> None:
+    """Executa após a inicialização do bot."""
     try:
+        # Resetar webhook para evitar conflitos
         await application.bot.delete_webhook(drop_pending_updates=True)
         logger.info("Webhook resetado com sucesso")
         
+        # Informações do bot
         me = await application.bot.get_me()
         logger.info(f"Bot iniciado: @{me.username} (ID: {me.id})")
     except Exception as e:
         logger.error(f"Erro no post_init: {e}", exc_info=True)
 
-# ================== FUNÇÃO PRINCIPAL CORRIGIDA ==================
 async def main() -> None:
-    """Ponto de entrada principal com tratamento robusto."""
-    while True:  # Loop para reinícios seguros
-        try:
-            logger.info("Construindo aplicação...")
-            app = ApplicationBuilder() \
-                .token(TOKEN) \
-                .post_init(post_init) \
-                .build()
-            
-            app.add_handler(CommandHandler("start", start))
-            app.add_handler(CallbackQueryHandler(button_handler))
-            app.add_error_handler(error_handler)
-            
-            logger.info("Iniciando polling...")
-            await app.run_polling(
-                drop_pending_updates=True,
-                allowed_updates=Update.ALL_TYPES
-            )
-            break  # Sai do loop se o polling terminar normalmente
-            
-        except Exception as e:
-            logger.critical(f"Falha crítica: {e}", exc_info=True)
-            logger.info("Reiniciando em 10 segundos...")
-            await asyncio.sleep(10)
-
-# Ponto de entrada
-if __name__ == "__main__":
-    if sys.platform == 'win32':
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
+    """Ponto de entrada principal com tratamento de erros robusto."""
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Bot encerrado pelo usuário")
+        logger.info("Iniciando aplicação Telegram...")
+        
+        # Construir aplicação
+        if TOKEN is None:
+            logger.error("Token do bot não configurado!")
+            raise RuntimeError("Token do bot não configurado!")
+        
+        app = Application.builder() \
+            .token(TOKEN) \
+            .post_init(post_init) \
+            .build()
+        
+        # Registrar handlers
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CallbackQueryHandler(button_handler))
+        app.add_error_handler(error_handler)
+        
+        logger.info("Handlers registrados. Iniciando polling...")
+        
+        # Iniciar em modo polling
+        await app.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES
+        )
+        
+    except Exception as e:
+        logger.critical(f"FALHA CRÍTICA: {e}", exc_info=True)
+        logger.info("Reiniciando em 10 segundos...")
+        await asyncio.sleep(10)
+        await main()  # Tentar reiniciar
+
+if __name__ == "__main__":
+    try:
+        # Cria um novo loop de eventos
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Executar com reinício automático em caso de falha
+        while True:
+            try:
+                loop.run_until_complete(main())
+            except KeyboardInterrupt:
+                logger.info("Bot encerrado pelo usuário")
+                break
+            except Exception as e:
+                logger.critical(f"Falha no loop principal: {e}")
+                logger.info("Reiniciando em 5 segundos...")
+                loop.run_until_complete(asyncio.sleep(5))
     except Exception as e:
         logger.critical(f"FALHA IRRECUPERÁVEL: {e}")
         sys.exit(1)
