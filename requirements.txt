@@ -6,6 +6,10 @@ python-dotenv
 jinja2
 requests
 
+# Dependências para gerar PDFs
+reportlab==4.0.7
+PyPDF2==4.0.1
+
 # Dependências complementares exigidas pela versão 13.15
 six
 urllib3
